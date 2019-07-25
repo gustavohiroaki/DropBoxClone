@@ -29,7 +29,7 @@ class DropBoxController {
             authDomain: "dropbox-clone-da76b.firebaseapp.com",
             databaseURL: "https://dropbox-clone-da76b.firebaseio.com",
             projectId: "dropbox-clone-da76b",
-            storageBucket: "",
+            storageBucket: "gs://dropbox-clone-da76b.appspot.com",
             messagingSenderId: "1075787011166",
             appId: "1:1075787011166:web:fe443f5b389b95fd"
           };
@@ -43,6 +43,69 @@ class DropBoxController {
 
     }
 
+    removeFolderTask(ref, name, key){
+        
+        return new Promise((resolve, reject) => {
+     
+            let folderRef = this.getFirebaseRef(ref + '/' + name);
+     
+            folderRef.on('value', snapshot => {
+     
+                folderRef.off('value');
+     
+                if (snapshot.exists()) {
+     
+                    snapshot.forEach(item => {
+     
+                        let data = item.val();
+                        data.key = item.key;
+        
+                        if (data.type === 'folder') {
+        
+                            this.removeFolderTask(ref + '/' + name, data.name).then(() => {
+        
+                                resolve({
+                                    fields: {
+                                        key: data.key
+                                    }
+                                });
+        
+                            }).catch(err => {
+                                reject(err);
+                            });
+        
+                        } else if (data.type) {
+        
+                            this.removeFile(ref + '/' + name, data.name).then(() => {
+        
+                                resolve({
+                                    fields: {
+                                        key: data.key
+                                    }
+                                });
+        
+                            }).catch(err => {
+                                reject(err);
+                            });
+        
+                        }
+        
+                    });
+        
+                    folderRef.remove();
+     
+                } else {
+     
+                    this.getFirebaseRef('hcode').child(key).remove();
+                        
+                }
+     
+            });
+     
+        });
+     
+    }
+
     removeTask(){
 
         let promises = [];
@@ -50,19 +113,76 @@ class DropBoxController {
         this.getSelection().forEach(li=>{
 
             let file = JSON.parse(li.dataset.file);
-            let key = li.dataset.key
+            let key = li.dataset.key;
 
-            let formData = new FormData();
-            formData.append('path',file.path);
-            formData.append('key',key);
 
-            promises.push(this.ajax('/file','DELETE',formData))
+
+            promises.push(new Promise((resolve,reject)=>{
+
+                if(file.type === 'folder'){
+
+                    this.removeFolderTask(this.currentFolder.join('/'), file.name, key).then(()=>{
+
+                        resolve({
+            
+                            fields:{
+                                key
+                            }
+            
+                        })
+            
+                    }).catch(err=>{
+            
+                        reject(err);
+            
+                    });
+
+                }
+                else if (file.type){
+
+
+
+                }
+                else {
+
+
+
+                }
+
+                this.removeFile(this.currentFolder.join('/'),file.name).then(()=>{
+
+                    resolve({
+        
+                        fields:{
+                            key
+                        }
+        
+                    })
+        
+                }).catch(err=>{
+        
+                    reject(err);
+        
+                })
+            }))
+
+
+
+
 
 
 
         })
 
         return Promise.all(promises);
+
+    }
+
+    removeFile(ref,name){
+
+        let fileRef = firebase.storage().ref(ref).child(name);
+
+        return fileRef.delete();
 
     }
 
@@ -156,11 +276,18 @@ class DropBoxController {
 
                 responses.forEach(resp => {
 
-                    // console.log(resp.files['input-file']);
+                    resp.ref.getDownloadURL().then(data=>{ 
 
-                    this.getFirebaseRef().push().set(resp.files['input-file']);
+                         this.getFirebaseRef().push().set({ 
+                            name: resp.name,
+                            type: resp.contentType,
+                            path: data,
+                            size: resp.size 
+                        }); 
 
-                })
+                    });
+
+                });
 
                 this.uploadComplete();
 
@@ -238,16 +365,45 @@ class DropBoxController {
 
         [...files].forEach(file=>{
 
-            let formData = new FormData();
 
-            formData.append('input-file',file)
+            promises.push(new Promise((resolve,reject)=>{
 
-            this.startuploadTime = Date.now();
 
-            promises.push(this.ajax('/upload','POST', formData, ()=>{
-                this.uploadProgress(event,file);
-            },()=>{
-                this.startuploadTime = Date.now();
+                let fileRef = firebase.storage().ref(this.currentFolder.join('/')).child(file.name);
+
+                let task = fileRef.put(file);
+    
+                task.on('state_changed', snapshot=>{
+    
+                    console.log('progress',snapshot);
+                    this.uploadProgress({
+                        loaded: snapshot.bytesTransfered,
+                        total: snapshot.totalBytes
+                    },file)
+    
+    
+                }, error=>{
+    
+                    console.error(error);
+                    reject(error);
+    
+    
+                }, ()=>{
+                    
+                    fileRef.getMetadata().then(metadata=>{
+
+                        resolve(metadata);
+
+
+                    }).catch(err=>{
+
+                        reject(err);
+
+                    })
+
+    
+                })
+
             }));
 
         })
@@ -587,7 +743,7 @@ class DropBoxController {
                 break;
 
                 default:
-                window.open('/file?path='+file.path);
+                window.open(file.path);
             }
 
         })
